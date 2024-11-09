@@ -3,32 +3,41 @@ $recoveryKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Sys
 $recoveryValueName1 = "DisableAutomaticRestartSignOn"
 $recoveryValueName2 = "DisableSystemReset"
 
-# Ensure the registry key exists
-if (!(Test-Path $recoveryKeyPath)) {
-    New-Item -Path $recoveryKeyPath -Force | Out-Null
-}
+# Function to take ownership and set permissions entirely within PowerShell
+function Set-RegistryPermissions {
+    param (
+        [string]$registryPath,
+        [string]$owner = "NT AUTHORITY\SYSTEM"
+    )
 
-# Use takeown and icacls commands to gain full control temporarily
-& cmd.exe /c "takeown /f C:\Windows\System32\config\SOFTWARE" | Out-Null
-& cmd.exe /c "icacls C:\Windows\System32\config\SOFTWARE /grant administrators:F /t" | Out-Null
+    # Ensure the registry path exists
+    if (!(Test-Path $registryPath)) {
+        New-Item -Path $registryPath -Force | Out-Null
+    }
+
+    # Retrieve the current ACL of the registry key
+    $acl = Get-Acl -Path $registryPath
+
+    # Set the owner to SYSTEM
+    $ownerSid = New-Object System.Security.Principal.NTAccount($owner)
+    $acl.SetOwner($ownerSid)
+
+    # Remove all existing access rules to restrict access
+    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) }
+
+    # Allow only SYSTEM full control
+    $accessRule = New-Object System.Security.AccessControl.RegistryAccessRule($ownerSid, "FullControl", "Allow")
+    $acl.AddAccessRule($accessRule)
+
+    # Apply the modified ACL back to the registry path
+    Set-Acl -Path $registryPath -AclObject $acl
+}
 
 # Set the registry values to disable Reset This PC option
 Set-ItemProperty -Path $recoveryKeyPath -Name $recoveryValueName1 -Value 1
 Set-ItemProperty -Path $recoveryKeyPath -Name $recoveryValueName2 -Value 1
 
-# Take ownership of the registry key and set permissions to lock it down
-$identityReference = [System.Security.Principal.NTAccount]"SYSTEM"
-
-# Retrieve and modify ACL for the Recovery key
-$aclRecovery = Get-Acl -Path $recoveryKeyPath
-$aclRecovery.SetOwner($identityReference)
-$aclRecovery.Access | ForEach-Object { $aclRecovery.RemoveAccessRule($_) }
-
-# Grant only SYSTEM full control to prevent any modifications
-$accessRuleRecovery = New-Object System.Security.AccessControl.RegistryAccessRule($identityReference, "FullControl", "Allow")
-$aclRecovery.AddAccessRule($accessRuleRecovery)
-
-# Apply the modified ACL to the recovery policy key
-Set-Acl -Path $recoveryKeyPath -AclObject $aclRecovery
+# Take ownership of the recovery policy registry key and restrict permissions
+Set-RegistryPermissions -registryPath $recoveryKeyPath
 
 Write-Output "The Reset this PC option has been disabled, and permissions are locked to prevent any changes."
