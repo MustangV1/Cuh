@@ -1,43 +1,46 @@
-# Define registry path for system recovery policies
+# Define registry paths and values for recovery policies
 $recoveryKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+$settingsKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
 $recoveryValueName1 = "DisableAutomaticRestartSignOn"
 $recoveryValueName2 = "DisableSystemReset"
+$settingsValueName = "NoRecovery"
 
-# Function to take ownership and set permissions entirely within PowerShell
+# Ensure the registry keys exist
+if (!(Test-Path $recoveryKeyPath)) {
+    New-Item -Path $recoveryKeyPath -Force | Out-Null
+}
+if (!(Test-Path $settingsKeyPath)) {
+    New-Item -Path $settingsKeyPath -Force | Out-Null
+}
+
+# Set registry values to disable Reset This PC and recovery options
+Set-ItemProperty -Path $recoveryKeyPath -Name $recoveryValueName1 -Value 1
+Set-ItemProperty -Path $recoveryKeyPath -Name $recoveryValueName2 -Value 1
+Set-ItemProperty -Path $settingsKeyPath -Name $settingsValueName -Value 1
+
+# Function to lock down permissions on registry keys
 function Set-RegistryPermissions {
     param (
         [string]$registryPath,
         [string]$owner = "NT AUTHORITY\SYSTEM"
     )
 
-    # Ensure the registry path exists
-    if (!(Test-Path $registryPath)) {
-        New-Item -Path $registryPath -Force | Out-Null
-    }
-
-    # Retrieve the current ACL of the registry key
+    # Retrieve the ACL and set owner to SYSTEM
     $acl = Get-Acl -Path $registryPath
-
-    # Set the owner to SYSTEM
     $ownerSid = New-Object System.Security.Principal.NTAccount($owner)
     $acl.SetOwner($ownerSid)
 
-    # Remove all existing access rules to restrict access
+    # Remove all existing permissions and grant only SYSTEM full control
     $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) }
-
-    # Allow only SYSTEM full control
     $accessRule = New-Object System.Security.AccessControl.RegistryAccessRule($ownerSid, "FullControl", "Allow")
     $acl.AddAccessRule($accessRule)
 
-    # Apply the modified ACL back to the registry path
+    # Apply the new ACL to the registry key
     Set-Acl -Path $registryPath -AclObject $acl
 }
 
-# Set the registry values to disable Reset This PC option
-Set-ItemProperty -Path $recoveryKeyPath -Name $recoveryValueName1 -Value 1
-Set-ItemProperty -Path $recoveryKeyPath -Name $recoveryValueName2 -Value 1
-
-# Take ownership of the recovery policy registry key and restrict permissions
+# Lock down permissions on the registry keys
 Set-RegistryPermissions -registryPath $recoveryKeyPath
+Set-RegistryPermissions -registryPath $settingsKeyPath
 
-Write-Output "The Reset this PC option has been disabled, and permissions are locked to prevent any changes."
+Write-Output "The Reset this PC option and recovery options have been disabled, and permissions are locked."
